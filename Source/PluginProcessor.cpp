@@ -17,8 +17,10 @@ StudioBridgeBalanceAudioProcessor::StudioBridgeBalanceAudioProcessor()
 
 void StudioBridgeBalanceAudioProcessor::prepareToPlay(double sampleRate, int)
 {
-    currentSampleRate = sampleRate;
+    currentSampleRate = sampleRate > 0.0 ? sampleRate : 44100.0;
     currentGain = 1.0f;
+    vocalEnvelope = 0.0f;
+    instrumentEnvelope = 0.0f;
 }
 
 void StudioBridgeBalanceAudioProcessor::releaseResources()
@@ -60,73 +62,117 @@ void StudioBridgeBalanceAudioProcessor::processBlock(
     if (numSamples == 0 || numMainChannels == 0)
         return;
 
-    const auto targetGainDb = apvts.getRawParameterValue("targetGain")->load();
-    const auto attackSeconds = apvts.getRawParameterValue("attack")->load();
-    const auto releaseSeconds = apvts.getRawParameterValue("release")->load();
-    const auto mix = apvts.getRawParameterValue("mix")->load();
-    const auto targetGain = juce::Decibels::decibelsToGain(targetGainDb);
-
-    auto desiredGain = targetGain;
-    if (sidechain.getNumChannels() > 0)
+    const auto isActive = apvts.getRawParameterValue("active")->load() > 0.5f;
+    if (!isActive)
     {
-        double mainEnergy = 0.0;
-        double sidechainEnergy = 0.0;
-        const auto sidechainSamples = juce::jmin(numSamples,
-                                                  sidechain.getNumSamples());
-
         for (auto channel = 0; channel < numMainChannels; ++channel)
-        {
-            const auto* samples = mainInput.getReadPointer(channel);
-            for (auto sample = 0; sample < numSamples; ++sample)
-                mainEnergy += static_cast<double>(samples[sample]) * samples[sample];
-        }
+            mainOutput.copyFrom(channel, 0, mainInput, channel, 0, numSamples);
 
-        for (auto channel = 0; channel < sidechain.getNumChannels(); ++channel)
-        {
-            const auto* samples = sidechain.getReadPointer(channel);
-            for (auto sample = 0; sample < sidechainSamples; ++sample)
-                sidechainEnergy += static_cast<double>(samples[sample]) * samples[sample];
-        }
+        currentGain = 1.0f;
+        gainReductionDb.store(0.0f);
+        isRefrain.store(false);
+        return;
+    }
 
-        const auto mainSampleCount =
-            static_cast<double>(numMainChannels) * numSamples;
-        const auto sidechainSampleCount =
-            static_cast<double>(sidechain.getNumChannels()) * sidechainSamples;
-        const auto mainRms = static_cast<float>(
-            std::sqrt(mainEnergy / mainSampleCount));
-        const auto sidechainRms = sidechainSampleCount > 0.0
-            ? static_cast<float>(std::sqrt(sidechainEnergy / sidechainSampleCount))
-            : 0.0f;
-        const auto ratio = mainRms / (sidechainRms + 0.0001f);
+    const auto targetGainDb = apvts.getRawParameterValue("targetGain")->load();
+    const auto attackMs = apvts.getRawParameterValue("attack")->load();
+    const auto releaseMs = apvts.getRawParameterValue("release")->load();
+    const auto sensitivityDb = apvts.getRawParameterValue("sensitivity")->load();
+    const auto refrainBoostDb = apvts.getRawParameterValue("refrainBoost")->load();
+    const auto targetGain = juce::Decibels::decibelsToGain(targetGainDb);
+    const auto attackSeconds = juce::jmax(attackMs * 0.001f, 0.00001f);
+    const auto releaseSeconds = juce::jmax(releaseMs * 0.001f, 0.00001f);
+    const auto attackCoefficient = std::exp(
+        -1.0 / (currentSampleRate * attackSeconds));
+    const auto releaseCoefficient = std::exp(
+        -1.0 / (currentSampleRate * releaseSeconds));
+
+    double mainEnergy = 0.0;
+    for (auto channel = 0; channel < numMainChannels; ++channel)
+    {
+        const auto* samples = mainInput.getReadPointer(channel);
+        for (auto sample = 0; sample < numSamples; ++sample)
+            mainEnergy += static_cast<double>(samples[sample]) * samples[sample];
+    }
+
+    const auto mainSampleCount =
+        static_cast<double>(numMainChannels) * numSamples;
+    const auto mainRms = static_cast<float>(
+        std::sqrt(mainEnergy / mainSampleCount));
+
+    double sidechainEnergy = 0.0;
+    const auto sidechainSamples = juce::jmin(numSamples,
+                                              sidechain.getNumSamples());
+    for (auto channel = 0; channel < sidechain.getNumChannels(); ++channel)
+    {
+        const auto* samples = sidechain.getReadPointer(channel);
+        for (auto sample = 0; sample < sidechainSamples; ++sample)
+            sidechainEnergy += static_cast<double>(samples[sample]) * samples[sample];
+    }
+
+    const auto sidechainSampleCount =
+        static_cast<double>(sidechain.getNumChannels()) * sidechainSamples;
+    const auto sidechainRms = sidechainSampleCount > 0.0
+        ? static_cast<float>(std::sqrt(sidechainEnergy / sidechainSampleCount))
+        : 0.0f;
+    const auto hasSidechainSignal = sidechainRms > 0.001f;
+    auto desiredGain = targetGain;
+
+    if (hasSidechainSignal)
+    {
+        const auto attackBlockCoefficient = std::pow(
+            attackCoefficient, static_cast<double>(numSamples));
+        const auto releaseBlockCoefficient = std::pow(
+            releaseCoefficient, static_cast<double>(numSamples));
+        const auto vocalCoefficient = mainRms > vocalEnvelope
+            ? attackBlockCoefficient
+            : releaseBlockCoefficient;
+        const auto instrumentCoefficient = sidechainRms > instrumentEnvelope
+            ? attackBlockCoefficient
+            : releaseBlockCoefficient;
+
+        vocalEnvelope = mainRms
+            + static_cast<float>(vocalCoefficient) * (vocalEnvelope - mainRms);
+        instrumentEnvelope = sidechainRms
+            + static_cast<float>(instrumentCoefficient)
+                * (instrumentEnvelope - sidechainRms);
+
+        const auto instrumentDb =
+            juce::Decibels::gainToDecibels(instrumentEnvelope, -60.0f);
+        const auto refrainDetected = instrumentDb > sensitivityDb;
+        isRefrain.store(refrainDetected);
+
+        const auto ratio = vocalEnvelope / (instrumentEnvelope + 0.0001f);
+        if (refrainDetected)
+            desiredGain *= juce::Decibels::decibelsToGain(refrainBoostDb);
 
         if (ratio < 1.0f)
             desiredGain *= ratio;
         else
             desiredGain = 1.0f;
     }
-
-    const auto sampleRate = currentSampleRate > 0.0
-        ? currentSampleRate
-        : 44100.0;
-    const auto attackCoefficient = std::exp(
-        -1.0f / static_cast<float>(sampleRate * juce::jmax(attackSeconds, 0.001f)));
-    const auto releaseCoefficient = std::exp(
-        -1.0f / static_cast<float>(sampleRate * juce::jmax(releaseSeconds, 0.001f)));
+    else
+    {
+        vocalEnvelope = mainRms;
+        instrumentEnvelope = 0.0f;
+        isRefrain.store(false);
+    }
 
     for (auto sample = 0; sample < numSamples; ++sample)
     {
         const auto coefficient = desiredGain < currentGain
             ? attackCoefficient
             : releaseCoefficient;
-        currentGain = desiredGain + coefficient * (currentGain - desiredGain);
+        currentGain = desiredGain
+            + static_cast<float>(coefficient) * (currentGain - desiredGain);
 
         for (auto channel = 0; channel < numMainChannels; ++channel)
-        {
-            const auto drySample = mainInput.getReadPointer(channel)[sample];
             mainOutput.getWritePointer(channel)[sample] =
-                drySample * (1.0f - mix) + drySample * currentGain * mix;
-        }
+                mainInput.getReadPointer(channel)[sample] * currentGain;
     }
+
+    const auto gainDb = juce::Decibels::gainToDecibels(currentGain, -24.0f);
+    gainReductionDb.store(juce::jmin(gainDb, 0.0f));
 }
 
 juce::AudioProcessorEditor* StudioBridgeBalanceAudioProcessor::createEditor()
@@ -220,19 +266,29 @@ StudioBridgeBalanceAudioProcessor::createParameterLayout()
         "Attack",
         juce::NormalisableRange<float>(0.01f, 1.0f),
         0.1f,
-        juce::AudioParameterFloatAttributes().withLabel("s")));
+        juce::AudioParameterFloatAttributes().withLabel("ms")));
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID{"release", 1},
         "Release",
         juce::NormalisableRange<float>(0.1f, 5.0f),
         1.0f,
-        juce::AudioParameterFloatAttributes().withLabel("s")));
+        juce::AudioParameterFloatAttributes().withLabel("ms")));
     layout.add(std::make_unique<juce::AudioParameterFloat>(
-        juce::ParameterID{"mix", 1},
-        "Mix",
-        juce::NormalisableRange<float>(0.0f, 1.0f),
-        1.0f,
-        juce::AudioParameterFloatAttributes().withLabel("%")));
+        juce::ParameterID{"sensitivity", 1},
+        "Sensitivity",
+        juce::NormalisableRange<float>(-40.0f, 0.0f),
+        -18.0f,
+        juce::AudioParameterFloatAttributes().withLabel("dB")));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID{"refrainBoost", 1},
+        "Refrain Boost",
+        juce::NormalisableRange<float>(0.0f, 6.0f),
+        3.0f,
+        juce::AudioParameterFloatAttributes().withLabel("dB")));
+    layout.add(std::make_unique<juce::AudioParameterBool>(
+        juce::ParameterID{"active", 1},
+        "Active",
+        true));
     return layout;
 }
 

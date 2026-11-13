@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <juce_audio_utils/juce_audio_utils.h>
 
 class StudioBridgeBalanceAudioProcessor final : public juce::AudioProcessor
@@ -33,6 +34,8 @@ public:
     void setStateInformation(const void* data, int sizeInBytes) override;
 
     juce::AudioProcessorValueTreeState apvts;
+    std::atomic<float> gainReductionDb{0.0f};
+    std::atomic<bool> isRefrain{false};
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout
@@ -40,6 +43,8 @@ private:
 
     double currentSampleRate = 44100.0;
     float currentGain = 1.0f;
+    float vocalEnvelope = 0.0f;
+    float instrumentEnvelope = 0.0f;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(StudioBridgeBalanceAudioProcessor)
 };
