@@ -2,8 +2,22 @@
 
 #include <memory>
 #include <juce_audio_utils/juce_audio_utils.h>
+#include <juce_gui_extra/juce_gui_extra.h>
 
 #include "PluginProcessor.h"
+
+class WaveformWebBrowser final : public juce::WebBrowserComponent,
+                                 public juce::FileDragAndDropTarget
+{
+public:
+    explicit WaveformWebBrowser(const Options& options);
+
+    bool isInterestedInFileDrag(const juce::StringArray& files) override;
+    void filesDropped(const juce::StringArray& files, int x, int y) override;
+
+    std::function<void(const juce::String&)> onButtonClick;
+    std::function<void(const juce::File&)> onWavFileDropped;
+};
 
 class TascamLookAndFeel final : public juce::LookAndFeel_V4
 {
@@ -35,8 +49,16 @@ public:
 
 private:
     void timerCallback() override;
+    void loadWavFile(const juce::File& file);
+    void handlePlayPause(bool isPlaying);
+    void exportProcessedAudio();
+    void setBrowserStatus(const juce::String& message);
+    void updateWaveform(const juce::File& file);
 
     StudioBridgeBalanceAudioProcessor& audioProcessor;
+    std::unique_ptr<WaveformWebBrowser> webComponent;
+    juce::AudioFormatManager waveformFormatManager;
+    juce::File loadedAudioFile;
 
     juce::Slider targetGainSlider;
     juce::Slider attackSlider;
@@ -50,6 +72,7 @@ private:
     juce::Label sensitivityLabel;
     juce::Label refrainBoostLabel;
     juce::Label lcdDisplay;
+    juce::Label audioFileStatusLabel;
     juce::ToggleButton activeButton;
     TascamLookAndFeel tascamLookAndFeel;
 

@@ -7,7 +7,7 @@ class StudioBridgeBalanceAudioProcessor final : public juce::AudioProcessor
 {
 public:
     StudioBridgeBalanceAudioProcessor();
-    ~StudioBridgeBalanceAudioProcessor() override = default;
+    ~StudioBridgeBalanceAudioProcessor() override;
 
     void prepareToPlay(double sampleRate, int samplesPerBlock) override;
     void releaseResources() override;
@@ -33,6 +33,12 @@ public:
     void getStateInformation(juce::MemoryBlock& destinationData) override;
     void setStateInformation(const void* data, int sizeInBytes) override;
 
+    bool loadAudioFile(const juce::File& file, juce::String& errorMessage);
+    void setAudioPreviewPlaying(bool shouldPlay);
+    bool renderAudioFileToWav(const juce::File& inputFile,
+                              const juce::File& outputFile,
+                              juce::String& errorMessage) const;
+
     juce::AudioProcessorValueTreeState apvts;
     std::atomic<float> gainReductionDb{0.0f};
     std::atomic<bool> isRefrain{false};
@@ -45,6 +51,11 @@ private:
     float currentGain = 1.0f;
     float vocalEnvelope = 0.0f;
     float instrumentEnvelope = 0.0f;
+    juce::AudioFormatManager audioFormatManager;
+    juce::TimeSliceThread audioReadAheadThread{"Studio Bridge Balance audio reader"};
+    juce::AudioTransportSource audioTransportSource;
+    std::unique_ptr<juce::AudioFormatReaderSource> audioFileSource;
+    std::atomic<int> audioFileChannels{0};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(StudioBridgeBalanceAudioProcessor)
 };

@@ -14,6 +14,15 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(JUCE)
 
+if(WIN32)
+    FetchContent_Declare(
+        WebView2
+        URL https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/1.0.2903.40/microsoft.web.webview2.1.0.2903.40.nupkg
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    )
+    FetchContent_MakeAvailable(WebView2)
+endif()
+
 if(APPLE)
     set(STUDIO_BRIDGE_PLUGIN_FORMATS VST3 AU Standalone)
 else()
@@ -55,8 +64,23 @@ target_link_libraries(StudioBridgeBalance PRIVATE
     juce::juce_gui_extra
 )
 
+if(WIN32)
+    target_include_directories(StudioBridgeBalance PRIVATE
+        "${webview2_SOURCE_DIR}/build/native/include"
+    )
+    target_link_libraries(StudioBridgeBalance PRIVATE
+        "${webview2_SOURCE_DIR}/build/native/x64/WebView2LoaderStatic.lib"
+    )
+endif()
+
 target_compile_definitions(StudioBridgeBalance PRIVATE
-    JUCE_WEB_BROWSER=0
+    JUCE_WEB_BROWSER=1
     JUCE_USE_CURL=0
     JUCE_VST3_CAN_REPLACE_VST2=0
 )
+
+if(WIN32)
+    target_compile_definitions(StudioBridgeBalance PRIVATE
+        JUCE_USE_WIN_WEBVIEW2_WITH_STATIC_LINKING=1
+    )
+endif()
