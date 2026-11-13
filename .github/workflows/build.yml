@@ -1,0 +1,68 @@
+name: Build JUCE Plugin
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-vst3:
+    name: Windows VST3
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build -A x64 -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build VST3
+        run: cmake --build build --config Release --target StudioBridgeBalance_VST3 --parallel 2
+
+      - name: Package VST3
+        shell: pwsh
+        run: |
+          $plugin = "build/StudioBridgeBalance_artefacts/Release/VST3/Studio Bridge Balance.vst3"
+          if (-not (Test-Path $plugin)) { throw "VST3 bundle was not created: $plugin" }
+          Compress-Archive -Path $plugin -DestinationPath "StudioBridgeBalance-Windows-VST3.zip" -Force
+
+      - name: Upload Windows VST3
+        uses: actions/upload-artifact@v4
+        with:
+          name: StudioBridgeBalance-Windows-VST3
+          path: StudioBridgeBalance-Windows-VST3.zip
+          if-no-files-found: error
+
+  macos-universal:
+    name: macOS Universal VST3 and AU
+    runs-on: macos-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Configure Universal build
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+
+      - name: Build VST3 and AU
+        run: cmake --build build --config Release --target StudioBridgeBalance_VST3 StudioBridgeBalance_AU --parallel 2
+
+      - name: Package VST3 and AU
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent "build/StudioBridgeBalance_artefacts/Release/VST3/Studio Bridge Balance.vst3" "StudioBridgeBalance-macOS-Universal-VST3.zip"
+          ditto -c -k --sequesterRsrc --keepParent "build/StudioBridgeBalance_artefacts/Release/AU/Studio Bridge Balance.component" "StudioBridgeBalance-macOS-Universal-AU.zip"
+
+      - name: Upload macOS Universal plugins
+        uses: actions/upload-artifact@v4
+        with:
+          name: StudioBridgeBalance-macOS-Universal
+          path: |
+            StudioBridgeBalance-macOS-Universal-VST3.zip
+            StudioBridgeBalance-macOS-Universal-AU.zip
+          if-no-files-found: error
