@@ -1,0 +1,38 @@
+name: Build VST3
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Config CMake
+        run: cmake -B build -G "Visual Studio 17 2022" -A x64
+      - name: Build
+        run: cmake --build build --config Release
+      - name: Zip
+        run: Compress-Archive -Path "build/StudioBridgeBalance_artefacts/Release/VST3/Studio Bridge Balance.vst3" -DestinationPath "VST3-Windows.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VST3-Windows
+          path: VST3-Windows.zip
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Config CMake
+        run: cmake -B build -G Xcode -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+      - name: Build
+        run: cmake --build build --config Release
+      - name: Zip
+        working-directory: build/StudioBridgeBalance_artefacts/Release
+        run: zip -r $GITHUB_WORKSPACE/VST3-macOS.zip "VST3/Studio Bridge Balance.vst3"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VST3-macOS
+          path: VST3-macOS.zip
