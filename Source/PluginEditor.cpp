@@ -213,8 +213,7 @@ StudioBridgeBalanceAudioProcessorEditor::StudioBridgeBalanceAudioProcessorEditor
     };
     addAndMakeVisible(*webComponent);
 
-    const auto html = juce::String(
-        R"html(<!doctype html>
+    const juce::String myHtmlUI = R"(<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
@@ -293,10 +292,10 @@ button:hover { background: #403719; }
 })();
 </script>
 </body>
-</html>)html");
+</html>)";
     webComponent->goToURL(
         "data:text/html;charset=utf-8,"
-        + juce::URL::addEscapeChars(html, true));
+        + juce::URL::addEscapeChars(myHtmlUI, true));
 
     startTimerHz(30);
     setSize(760, 660);
